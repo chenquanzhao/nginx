@@ -26,6 +26,7 @@ static void ngx_channel_handler(ngx_event_t *ev);
 static void ngx_cache_manager_process_cycle(ngx_cycle_t *cycle, void *data);
 static void ngx_cache_manager_process_handler(ngx_event_t *ev);
 static void ngx_cache_loader_process_handler(ngx_event_t *ev);
+static ngx_int_t ngx_worker_process_lvload(ngx_cycle_t *cycle, ngx_int_t worker);
 
 
 ngx_uint_t    ngx_process;
@@ -42,6 +43,7 @@ sig_atomic_t  ngx_debug_quit;
 ngx_uint_t    ngx_exiting;
 sig_atomic_t  ngx_reconfigure;
 sig_atomic_t  ngx_reopen;
+sig_atomic_t  ngx_lvconfigure;
 
 sig_atomic_t  ngx_change_binary;
 ngx_pid_t     ngx_new_binary;
@@ -91,6 +93,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
     sigaddset(&set, SIGIO);
     sigaddset(&set, SIGINT);
     sigaddset(&set, ngx_signal_value(NGX_RECONFIGURE_SIGNAL));
+    sigaddset(&set, ngx_signal_value(NGX_LVCONFIGURE_SIGNAL));
     sigaddset(&set, ngx_signal_value(NGX_REOPEN_SIGNAL));
     sigaddset(&set, ngx_signal_value(NGX_NOACCEPT_SIGNAL));
     sigaddset(&set, ngx_signal_value(NGX_TERMINATE_SIGNAL));
@@ -280,6 +283,14 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
             ngx_noaccepting = 1;
             ngx_signal_worker_processes(cycle,
                                         ngx_signal_value(NGX_SHUTDOWN_SIGNAL));
+        }
+
+        if (ngx_lvconfigure) {
+            ngx_lvconfigure = 0;
+
+            ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0, "master lvconfiguring");
+            ngx_signal_worker_processes(cycle,
+                                        ngx_signal_value(NGX_LVCONFIGURE_SIGNAL));
         }
     }
 }
@@ -481,6 +492,10 @@ ngx_signal_worker_processes(ngx_cycle_t *cycle, int signo)
         ch.command = NGX_CMD_REOPEN;
         break;
 
+    case ngx_signal_value(NGX_LVCONFIGURE_SIGNAL):
+        ch.command = NGX_CMD_LVCONFIGURE;
+        break;
+
     default:
         ch.command = 0;
     }
@@ -522,7 +537,8 @@ ngx_signal_worker_processes(ngx_cycle_t *cycle, int signo)
                                   &ch, sizeof(ngx_channel_t), cycle->log)
                 == NGX_OK)
             {
-                if (signo != ngx_signal_value(NGX_REOPEN_SIGNAL)) {
+                if (signo != ngx_signal_value(NGX_REOPEN_SIGNAL) &&
+                    signo != ngx_signal_value(NGX_LVCONFIGURE_SIGNAL)) {
                     ngx_processes[i].exiting = 1;
                 }
 
@@ -718,6 +734,12 @@ ngx_master_process_exit(ngx_cycle_t *cycle)
     ngx_exit_cycle.files_n = ngx_cycle->files_n;
     ngx_cycle = &ngx_exit_cycle;
 
+    if (cycle->old_conf_pool != NULL) {
+        ngx_destroy_pool(cycle->old_conf_pool);
+    }
+    if (cycle->conf_pool != NULL) {
+        ngx_destroy_pool(cycle->conf_pool);
+    }
     ngx_destroy_pool(cycle->pool);
 
     exit(0);
@@ -773,7 +795,62 @@ ngx_worker_process_cycle(ngx_cycle_t *cycle, void *data)
             ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0, "reopening logs");
             ngx_reopen_files(cycle, -1);
         }
+
+        if (ngx_lvconfigure) {
+            ngx_lvconfigure = 0;
+
+            ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0,
+                          "worker %d lvconfiguring", worker);
+            if (ngx_worker_process_lvload(cycle, worker) != NGX_OK) {
+                ngx_log_error(NGX_LOG_ERR, cycle->log, 0,
+                              "worker %d lvconfiguring failure", worker);
+            } else {
+                cycle = (ngx_cycle_t *) ngx_cycle;
+                ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0,
+                              "worker %d lvconfiguring success", worker);
+            }
+        }
     }
+}
+
+
+static ngx_int_t
+ngx_worker_process_lvload(ngx_cycle_t *cycle, ngx_int_t worker)
+{
+    ngx_uint_t           i, j;
+    ngx_cycle_t          *new_cycle;
+    ngx_listening_t      *ls, *nls;
+
+    /* parse ngx config */
+    cycle->status = NGX_CYCLE_LVLOADING;
+    new_cycle = ngx_init_cycle(cycle);
+    if (new_cycle == NULL) {
+        ngx_log_error(NGX_LOG_ERR, cycle->log, 0,
+                      "parse ngx config error");
+        cycle->status = NGX_CYCLE_UNLOADING;
+        return NGX_ERROR;
+    }
+
+    /* set ngx config */
+    cycle->conf_ctx = new_cycle->conf_ctx;
+    ls = cycle->listening.elts;
+    nls = new_cycle->listening.elts;
+    for (i = 0; i < cycle->listening.nelts; i++) {
+        for (j = 0; j < new_cycle->listening.nelts; j++) {
+            if (ngx_cmp_sockaddr(ls[i].sockaddr, ls[i].socklen,
+                                 nls[j].sockaddr, nls[j].socklen,
+                                 1) == NGX_OK) {
+                ls[i].servers = nls[j].servers;
+                break;
+            }
+        }
+    }
+
+    /* set global ngx_cycle */
+    ngx_cycle = cycle;
+    ngx_cycle->mode = NGX_CYCLE_LVLOAD_MODE;
+    cycle->status = NGX_CYCLE_UNLOADING;
+    return NGX_OK;
 }
 
 
@@ -1027,6 +1104,12 @@ ngx_worker_process_exit(ngx_cycle_t *cycle)
     ngx_exit_cycle.files_n = ngx_cycle->files_n;
     ngx_cycle = &ngx_exit_cycle;
 
+    if (cycle->old_conf_pool != NULL) {
+        ngx_destroy_pool(cycle->old_conf_pool);
+    }
+    if (cycle->conf_pool != NULL) {
+        ngx_destroy_pool(cycle->conf_pool);
+    }
     ngx_destroy_pool(cycle->pool);
 
     ngx_log_error(NGX_LOG_NOTICE, ngx_cycle->log, 0, "exit");
@@ -1117,6 +1200,10 @@ ngx_channel_handler(ngx_event_t *ev)
             }
 
             ngx_processes[ch.slot].channel[0] = -1;
+            break;
+
+        case NGX_CMD_LVCONFIGURE:
+            ngx_lvconfigure = 1;
             break;
         }
     }

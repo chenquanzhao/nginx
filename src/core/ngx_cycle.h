@@ -22,6 +22,14 @@
 #define NGX_DEBUG_POINTS_ABORT  2
 
 
+#define NGX_CYCLE_LVLOADING     1
+#define NGX_CYCLE_UNLOADING     0
+
+
+#define NGX_CYCLE_RELOAD_MODE   0
+#define NGX_CYCLE_LVLOAD_MODE   1
+
+
 typedef struct ngx_shm_zone_s  ngx_shm_zone_t;
 
 typedef ngx_int_t (*ngx_shm_zone_init_pt) (ngx_shm_zone_t *zone, void *data);
@@ -39,6 +47,8 @@ struct ngx_shm_zone_s {
 struct ngx_cycle_s {
     void                  ****conf_ctx;
     ngx_pool_t               *pool;
+    ngx_pool_t               *conf_pool;
+    ngx_pool_t               *old_conf_pool;
 
     ngx_log_t                *log;
     ngx_log_t                 new_log;
@@ -81,6 +91,9 @@ struct ngx_cycle_s {
     ngx_str_t                 prefix;
     ngx_str_t                 lock_file;
     ngx_str_t                 hostname;
+
+    unsigned                  status:1;
+    unsigned                  mode:1;
 };
 
 

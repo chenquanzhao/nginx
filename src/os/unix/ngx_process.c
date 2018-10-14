@@ -42,6 +42,11 @@ ngx_signal_t  signals[] = {
       "reload",
       ngx_signal_handler },
 
+    { ngx_signal_value(NGX_LVCONFIGURE_SIGNAL),
+        "SIG" ngx_value(NGX_LVCONFIGURE_SIGNAL),
+        "lvload",
+        ngx_signal_handler },
+
     { ngx_signal_value(NGX_REOPEN_SIGNAL),
       "SIG" ngx_value(NGX_REOPEN_SIGNAL),
       "reopen",
@@ -366,6 +371,11 @@ ngx_signal_handler(int signo, siginfo_t *siginfo, void *ucontext)
             action = ", reconfiguring";
             break;
 
+        case ngx_signal_value(NGX_LVCONFIGURE_SIGNAL):
+            ngx_lvconfigure = 1;
+            action = ", lvconfiguring";
+            break;
+
         case ngx_signal_value(NGX_REOPEN_SIGNAL):
             ngx_reopen = 1;
             action = ", reopening logs";
@@ -432,6 +442,7 @@ ngx_signal_handler(int signo, siginfo_t *siginfo, void *ucontext)
             break;
 
         case ngx_signal_value(NGX_RECONFIGURE_SIGNAL):
+        case ngx_signal_value(NGX_LVCONFIGURE_SIGNAL):
         case ngx_signal_value(NGX_CHANGEBIN_SIGNAL):
         case SIGIO:
             action = ", ignoring";

@@ -25,11 +25,11 @@ ngx_event_accept(ngx_event_t *ev)
     socklen_t          socklen;
     ngx_err_t          err;
     ngx_log_t         *log;
-    ngx_uint_t         level;
+    ngx_uint_t         level, i;
     ngx_socket_t       s;
     ngx_event_t       *rev, *wev;
     ngx_sockaddr_t     sa;
-    ngx_listening_t   *ls;
+    ngx_listening_t   *ls, *nls;
     ngx_connection_t  *c, *lc;
     ngx_event_conf_t  *ecf;
 #if (NGX_HAVE_ACCEPT4)
@@ -52,6 +52,22 @@ ngx_event_accept(ngx_event_t *ev)
 
     lc = ev->data;
     ls = lc->listening;
+
+    /* find the newest listen socket */
+    if (ngx_cycle->mode == NGX_CYCLE_LVLOAD_MODE) {
+        nls = ngx_cycle->listening.elts;
+        for (i = 0; i < ngx_cycle->listening.nelts; i++) {
+            if (ngx_cmp_sockaddr(ls->sockaddr, ls->socklen, nls[i].sockaddr,
+                                 nls[i].socklen, 1) == NGX_OK) {
+                ngx_log_error(NGX_LOG_DEBUG, ev->log, 0,
+                              "found the newest ls for %s: %d",
+                              ls->addr_text.data, ls->fd);
+                ls = &nls[i];
+                break;
+            }
+        }
+    }
+
     ev->ready = 0;
 
     ngx_log_debug2(NGX_LOG_DEBUG_EVENT, ev->log, 0,
