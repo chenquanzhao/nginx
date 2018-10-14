@@ -45,6 +45,7 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
     ngx_time_t          *tp;
     ngx_conf_t           conf;
     ngx_pool_t          *pool;
+    ngx_pool_t          *conf_pool;
     ngx_cycle_t         *cycle, **old;
     ngx_shm_zone_t      *shm_zone, *oshm_zone;
     ngx_list_part_t     *part, *opart;
@@ -66,10 +67,22 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
 
     log = old_cycle->log;
 
-    pool = ngx_create_pool(NGX_CYCLE_POOL_SIZE, log);
-    if (pool == NULL) {
-        return NULL;
+    if (old_cycle->status == NGX_CYCLE_LVLOADING) {
+        conf_pool = ngx_create_pool(NGX_CYCLE_POOL_SIZE, log);
+        if (conf_pool == NULL) {
+            return NULL;
+        }
+
+        pool = conf_pool;
+    } else {
+        pool = ngx_create_pool(NGX_CYCLE_POOL_SIZE, log);
+        if (pool == NULL) {
+            return NULL;
+        }
+
+        conf_pool = NULL;
     }
+
     pool->log = log;
 
     cycle = ngx_pcalloc(pool, sizeof(ngx_cycle_t));
@@ -81,6 +94,12 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
     cycle->pool = pool;
     cycle->log = log;
     cycle->old_cycle = old_cycle;
+    cycle->mode = NGX_CYCLE_RELOAD_MODE;
+
+    if (old_cycle->status != NGX_CYCLE_LVLOADING) {
+        cycle->conf_pool = NULL;
+        cycle->old_conf_pool = NULL;
+    }
 
     cycle->conf_prefix.len = old_cycle->conf_prefix.len;
     cycle->conf_prefix.data = ngx_pstrdup(pool, &old_cycle->conf_prefix);
@@ -302,7 +321,19 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
         }
     }
 
-    if (ngx_process == NGX_PROCESS_SIGNALLER) {
+    if (ngx_process == NGX_PROCESS_SIGNALLER ||
+        old_cycle->status == NGX_CYCLE_LVLOADING) {
+        if (old_cycle->status == NGX_CYCLE_LVLOADING) {
+            ngx_destroy_pool(conf.temp_pool);
+
+            if (old_cycle->old_conf_pool != NULL) {
+                ngx_destroy_pool(old_cycle->old_conf_pool);
+                old_cycle->old_conf_pool = NULL;
+            }
+
+            old_cycle->old_conf_pool = old_cycle->conf_pool;
+            old_cycle->conf_pool = conf_pool;
+        }
         return cycle;
     }
 
@@ -757,6 +788,13 @@ old_shm_zone_done:
     ngx_destroy_pool(conf.temp_pool);
 
     if (ngx_process == NGX_PROCESS_MASTER || ngx_is_init_cycle(old_cycle)) {
+
+        if (old_cycle->old_conf_pool != NULL) {
+            ngx_destroy_pool(old_cycle->old_conf_pool);
+        }
+        if (old_cycle->conf_pool != NULL) {
+            ngx_destroy_pool(old_cycle->conf_pool);
+        }
 
         ngx_destroy_pool(old_cycle->pool);
         cycle->old_cycle = NULL;

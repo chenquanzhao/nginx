@@ -1,0 +1,48 @@
+#!/bin/sh
+
+#  build.sh
+#  nginx
+#
+#  Created by cqz on 10/14/18.
+#  Copyright © 2018 cqz. All rights reserved.
+
+NGX_HOME=/usr/local/nginx
+LOG_HOME=$NGX_HOME/logs
+
+NGX_SBIN=$NGX_HOME/sbin/nginx
+ACCESS_LOG=$LOG_HOME/access.log
+ERROR_LOG=$LOG_HOME/error.log
+
+
+# stop nginx
+if [ -n "$(netstat -ntlp | grep nginx)" ]; then
+    $NGX_SBIN -s stop
+fi
+
+# build nginx
+./auto/configure \
+   --with-debug \
+   --with-http_ssl_module \
+   --with-http_v2_module \
+   --with-http_realip_module \
+   --with-http_stub_status_module \
+   --with-stream \
+   --with-stream_ssl_module \
+   --with-stream_realip_module
+#./auto/configure \
+#    --with-debug
+make
+make install
+
+# clear log
+echo > $ACCESS_LOG
+echo > $ERROR_LOG
+
+# for test
+if [ "$1" == "test" ]; then
+    $NGX_SBIN
+    sleep 1
+    netstat -ntlp
+    ps aux | grep -v grep | grep nginx
+    tail -f $ERROR_LOG
+fi

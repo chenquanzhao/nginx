@@ -407,7 +407,7 @@ ngx_show_version_info(void)
             "  -q            : suppress non-error messages "
                                "during configuration testing" NGX_LINEFEED
             "  -s signal     : send signal to a master process: "
-                               "stop, quit, reopen, reload" NGX_LINEFEED
+                               "stop, quit, reopen, reload, lvload" NGX_LINEFEED
 #ifdef NGX_PREFIX
             "  -p prefix     : set prefix path (default: " NGX_PREFIX ")"
                                NGX_LINEFEED
@@ -842,7 +842,8 @@ ngx_get_options(int argc, char *const *argv)
                 if (ngx_strcmp(ngx_signal, "stop") == 0
                     || ngx_strcmp(ngx_signal, "quit") == 0
                     || ngx_strcmp(ngx_signal, "reopen") == 0
-                    || ngx_strcmp(ngx_signal, "reload") == 0)
+                    || ngx_strcmp(ngx_signal, "reload") == 0
+                    || ngx_strcmp(ngx_signal, "lvload") == 0)
                 {
                     ngx_process = NGX_PROCESS_SIGNALLER;
                     goto next;
